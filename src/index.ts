@@ -24,10 +24,19 @@ async function providerCheck(env: Env, provider: string): Promise<Check> {
     return { provider, healthy: response.ok, detail: response.ok ? "Provider API responded successfully" : `Provider API returned HTTP ${response.status}`, checkedAt };
   } catch (error) { return { provider, healthy: false, detail: error instanceof Error ? error.message.slice(0, 120) : "Provider check failed", checkedAt }; }
 }
+async function applicationCheck(domain: string): Promise<Check> {
+  const checkedAt = now();
+  try {
+    const response = await fetch(`https://${domain}/`, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(5000) });
+    const healthy = response.status >= 200 && response.status < 400;
+    return { provider: "Public endpoint", healthy, detail: healthy ? `HTTP ${response.status}` : `HTTP ${response.status}`, checkedAt };
+  } catch (error) { return { provider: "Public endpoint", healthy: false, detail: error instanceof Error ? error.message.slice(0, 120) : "Endpoint check failed", checkedAt }; }
+}
 async function status(env: Env) {
   const providers = ["Cloudflare", "Google Cloud", "GitHub"];
+  const providerChecks = await Promise.all(providers.map(provider => providerCheck(env, provider)));
   const rows: Application[] = [];
-  for (const [id, name, domain] of applications) rows.push({ id, name, domain, checks: await Promise.all(providers.map(provider => providerCheck(env, provider))) });
+  for (const [id, name, domain] of applications) rows.push({ id, name, domain, checks: [...providerChecks, await applicationCheck(domain)] });
   const allHealthy = rows.every(row => row.checks.every(check => check.healthy));
   return { checkedAt: now(), overall: allHealthy ? "operational" : "monitoring", applications: rows };
 }
