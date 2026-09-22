@@ -2,5 +2,10 @@ name = "status-cheaply"
 main = "src/index.ts"
 compatibility_date = "2026-09-22"
 
+# The public production hostname is intentionally declared here; Cloudflare will
+# provision the custom-domain route only after the zone and deployment account
+# are authorized in the release environment.
+routes = [{ pattern = "status.cheaply.fr", custom_domain = true }]
+
 [vars]
 STATUS_CACHE_SECONDS = "60"
