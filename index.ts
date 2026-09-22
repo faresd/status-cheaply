@@ -1,0 +1,49 @@
+type Env = {
+  CLOUDFLARE_ACCOUNT_ID?: string; CLOUDFLARE_API_TOKEN?: string;
+  GOOGLE_PROJECT_IDS?: string; GOOGLE_ACCESS_TOKEN?: string;
+  GITHUB_TOKEN?: string; GITHUB_OWNER?: string;
+  STATUS_CACHE_SECONDS?: string;
+};
+type Check = { provider: string; healthy: boolean; detail: string; checkedAt: string };
+type Application = { id: string; name: string; domain: string; checks: Check[] };
+const applications = [
+  ["maintain", "Maintain", "maintain.cheaply.fr"], ["stock", "Stock", "stock.cheaply.fr"],
+  ["mail", "Cheaply Mail", "mail.cheaply.fr"], ["presence", "Cheaply Presence", "presence.cheaply.fr"],
+  ["inbound-track", "Inbound Track", "inboundtrack.cheaply.fr"], ["carrier-claim-assistant", "Carrier Claim Assistant", "carrier-claim-assistant.cheaply.fr"],
+] as const;
+const now = () => new Date().toISOString();
+const safe = (value: unknown) => String(value ?? "").replace(/[&<>\"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c] || c));
+async function providerCheck(env: Env, provider: string): Promise<Check> {
+  const checkedAt = now();
+  try {
+    let response: Response;
+    if (provider === "Cloudflare" && env.CLOUDFLARE_ACCOUNT_ID && env.CLOUDFLARE_API_TOKEN) response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID)}/workers/scripts?per_page=1`, { headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` }, signal: AbortSignal.timeout(5000) });
+    else if (provider === "Google Cloud" && env.GOOGLE_PROJECT_IDS && env.GOOGLE_ACCESS_TOKEN) response = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects?filter=${encodeURIComponent(env.GOOGLE_PROJECT_IDS.split(",")[0].trim())}&pageSize=1`, { headers: { Authorization: `Bearer ${env.GOOGLE_ACCESS_TOKEN}` }, signal: AbortSignal.timeout(5000) });
+    else if (provider === "GitHub" && env.GITHUB_OWNER && env.GITHUB_TOKEN) response = await fetch("https://api.github.com/user", { headers: { Authorization: `Bearer ${env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json", "User-Agent": "status-cheaply" }, signal: AbortSignal.timeout(5000) });
+    else return { provider, healthy: false, detail: "Provider evidence is not configured", checkedAt };
+    return { provider, healthy: response.ok, detail: response.ok ? "Provider API responded successfully" : `Provider API returned HTTP ${response.status}`, checkedAt };
+  } catch (error) { return { provider, healthy: false, detail: error instanceof Error ? error.message.slice(0, 120) : "Provider check failed", checkedAt }; }
+}
+async function applicationCheck(domain: string): Promise<Check> {
+  const checkedAt = now();
+  try {
+    const response = await fetch(`https://${domain}/`, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(5000) });
+    const healthy = response.status >= 200 && response.status < 400;
+    return { provider: "Public endpoint", healthy, detail: healthy ? `HTTP ${response.status}` : `HTTP ${response.status}`, checkedAt };
+  } catch (error) { return { provider: "Public endpoint", healthy: false, detail: error instanceof Error ? error.message.slice(0, 120) : "Endpoint check failed", checkedAt }; }
+}
+async function status(env: Env) {
+  const providers = ["Cloudflare", "Google Cloud", "GitHub"];
+  const providerChecks = await Promise.all(providers.map(provider => providerCheck(env, provider)));
+  const rows: Application[] = [];
+  for (const [id, name, domain] of applications) rows.push({ id, name, domain, checks: [...providerChecks, await applicationCheck(domain)] });
+  const checks = rows.flatMap(row => row.checks);
+  const endpointOutage = checks.some(check => check.provider === "Public endpoint" && !check.healthy);
+  const providerEvidenceMissing = checks.some(check => check.provider !== "Public endpoint" && !check.healthy);
+  const overall = endpointOutage ? "outage" : providerEvidenceMissing ? "monitoring" : "operational";
+  return { checkedAt: now(), overall, applications: rows };
+}
+function page() {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cheaply status</title><style>:root{--ink:#17231c;--muted:#6d776f;--line:#dfe6e1;--green:#168b68;--amber:#b17912}*{box-sizing:border-box}body{margin:0;background:#fbfcfb;color:var(--ink);font:15px/1.5 system-ui,sans-serif}main{width:min(1040px,calc(100% - 36px));margin:58px auto 80px}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:42px}.brand{font-size:31px;font-weight:800;letter-spacing:-.04em}.brand span{color:#758078;font-weight:500}.subscribe{border:0;background:#20242b;color:white;border-radius:10px;padding:13px 18px;font-weight:700}.summary,.panel{border:1px solid var(--line);border-radius:16px;overflow:hidden;background:white}.summary{margin-bottom:36px}.summary-top{padding:24px 28px;background:#dcf8ef;font-size:24px;font-weight:750}.summary-top i{font-style:normal;background:#25ba91;color:white;border-radius:50%;padding:2px 8px;margin-right:10px}.summary p{margin:0;padding:24px 28px;font-size:17px}.panel-head{padding:22px 28px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between}.panel-head h2{margin:0;font-size:22px}.muted{color:var(--muted);font-size:13px}.row{padding:22px 28px;border-bottom:1px solid #edf0ee;display:grid;grid-template-columns:18px minmax(170px,1fr) minmax(150px,1fr) minmax(240px,1.4fr);gap:18px;align-items:center}.row:last-child{border-bottom:0}.dot{width:14px;height:14px;border-radius:50%;background:#20b990;box-shadow:0 0 0 5px #dff7ef}.dot.monitoring{background:#efb323;box-shadow:0 0 0 5px #fff1c9}.name{font-weight:750;font-size:17px}.domain{display:block;color:var(--muted);font-size:12px}.state{font-weight:700;color:var(--green)}.state.monitoring{color:var(--amber)}.chips{display:flex;gap:7px;flex-wrap:wrap}.chip{font-size:11px;border:1px solid var(--line);border-radius:999px;padding:4px 8px;color:#657169}@media(max-width:760px){main{margin-top:30px}.row{grid-template-columns:18px 1fr}.row>*:not(.dot){grid-column:2}header{align-items:flex-start;gap:12px;flex-direction:column}}</style></head><body><main><header><div class="brand">Cheaply<span> status</span></div><button class="subscribe" onclick="alert('Subscriptions will be available soon.')">Subscribe to updates</button></header><section class="summary"><div class="summary-top"><i>✓</i><span id="headline">Checking Cheaply systems…</span></div><p id="copy">We are checking the latest Cloudflare, Google Cloud, and GitHub evidence.</p></section><section class="panel"><div class="panel-head"><h2>System status</h2><span class="muted" id="checked">Loading…</span></div><div id="rows"></div></section></main><script>const e=s=>String(s).replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]||c));fetch('/api/status').then(r=>r.json()).then(d=>{document.getElementById('headline').textContent=d.overall==='operational'?'We’re fully operational':'We’re monitoring our systems';document.getElementById('copy').textContent=d.overall==='operational'?'We’re not aware of any issues affecting our systems.':'Some provider evidence is missing or awaiting a fresh check.';document.getElementById('checked').textContent='Updated '+new Date(d.checkedAt).toLocaleString();document.getElementById('rows').innerHTML=d.applications.map(a=>{const ok=a.checks.every(c=>c.healthy);return '<article class="row"><i class="dot '+(ok?'':'monitoring')+'"></i><div><div class="name">'+e(a.name)+'</div><span class="domain">'+e(a.domain)+'</span></div><div class="state '+(ok?'':'monitoring')+'">'+(ok?'Operational':'Monitoring coverage')+'</div><div class="chips">'+a.checks.map(c=>'<span class="chip">'+e(c.provider)+'</span>').join('')+'</div></article>'}).join('')})</script></body></html>`;
+}
+export default { async fetch(request: Request, env: Env): Promise<Response> { const url = new URL(request.url); if (url.pathname === "/api/status") return Response.json(await status(env), { headers: { "Cache-Control": `public, max-age=${env.STATUS_CACHE_SECONDS || "60"}, s-maxage=60` } }); if (url.pathname === "/healthz") return Response.json({ ok: true, service: "status-cheaply" }); return new Response(page(), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=60", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'" } }); } };
