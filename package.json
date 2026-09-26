@@ -3,7 +3,23 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "scripts": { "check": "tsc --noEmit", "test": "node --test test/*.test.mjs", "ci": "pnpm check && pnpm test", "deploy": "wrangler deploy" },
-  "devDependencies": { "@cloudflare/workers-types": "4.20260515.1", "typescript": "5.9.3", "wrangler": "4.92.0" },
-  "packageManager": "pnpm@11.19.0"
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --test test/*.test.mjs",
+    "ci": "pnpm check && pnpm test",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "4.20260515.1",
+    "typescript": "5.9.3",
+    "wrangler": "4.92.0"
+  },
+  "packageManager": "pnpm@11.19.0",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "sharp",
+      "workerd"
+    ]
+  }
 }
